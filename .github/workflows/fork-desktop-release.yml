@@ -12,9 +12,18 @@ permissions:
 jobs:
   build_macos_arm64:
     name: Build macOS (arm64 DMG)
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 35
     steps:
+      - name: Select Xcode 26+
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcode_app="$(ls -d /Applications/Xcode_26*.app /Applications/Xcode_27*.app /Applications/Xcode.app 2>/dev/null | head -n 1 || true)"
+          if [[ -n "$xcode_app" ]]; then
+            sudo xcode-select -s "$xcode_app/Contents/Developer"
+          fi
+          xcodebuild -version || true
       - name: Checkout
         shell: bash
         env:
@@ -90,6 +99,10 @@ jobs:
         with:
           toolchain: stable
           targets: x86_64-pc-windows-msvc
+
+      - name: Install Linux build dependencies
+        shell: bash
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
 
       - name: Install cargo-xwin
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
