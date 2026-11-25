@@ -166,7 +166,9 @@ jobs:
           Unofficial personal fork build (not affiliated with or endorsed by T3 Tools, Inc.).
 
           ### Changes in this build
-          - Compact live usage panel docked in the sidebar footer (`5h` / `7d` / `All` quota switcher, per-provider grouping with token & prompt-cache hit rate, non-clickable display with hover tooltips, collapsible 1-line bar).
+          - **Sidebar Live Usage Panel**: Compact live usage & quota panel docked in the sidebar footer (`5h` / `7d` / `All` switcher, strictly grouped per provider with tokens & prompt-cache hit rate, non-clickable display with fast 150ms hover tooltips, collapsible 1-line bar).
+          - **Composer Prompt-Cache Hit-Rate Strip**: Per-agent prompt-cache hit-rate badges directly below the composer for the current thread (with fast hover breakdown of cached/input/write tokens, turns, and latest-turn rate).
+          - **Settings → Appearance → Interface**: Added independent toggles to show or hide the sidebar live usage panel and the composer cache hit-rate strip.
 
           ### Install notes (unsigned builds)
           - **macOS (Apple Silicon `.dmg`)**: If macOS Gatekeeper blocks the unsigned app on first launch, run `xattr -cr "/Applications/T3 Code (Beta).app"` (or Right-click → Open).
