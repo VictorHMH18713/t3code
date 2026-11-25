@@ -410,6 +410,34 @@ export function AppearanceSettingsPanel() {
             />
           }
         />
+        <SettingsRow
+          {...searchableSetting("sidebar-usage-panel")}
+          description={gt(
+            "Show a compact live usage and quota panel at the bottom of the sidebar.",
+          )}
+          resetAction={
+            settings.sidebarUsagePanelEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarUsagePanelEnabled ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset sidebar usage panel to default")}
+                onClick={() =>
+                  updateSettings({
+                    sidebarUsagePanelEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarUsagePanelEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarUsagePanelEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarUsagePanelEnabled: Boolean(checked) })
+              }
+              aria-label={gt("Sidebar usage panel")}
+            />
+          }
+        />
         <AdvancedSettings
           targetIds={[
             searchableSetting("panel-animations").id,

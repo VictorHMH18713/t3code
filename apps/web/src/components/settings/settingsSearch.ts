@@ -397,6 +397,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "sidebar-usage-panel",
+    title: msg("Sidebar usage panel"),
+    to: "/settings/appearance",
+    searchTerms: [
+      msg("usage limits quota 5h 7d weekly session cache tokens sidebar live footer panel"),
+    ],
+  },
+  {
     id: "effort-display",
     title: msg("Effort display"),
     to: "/settings/appearance",
