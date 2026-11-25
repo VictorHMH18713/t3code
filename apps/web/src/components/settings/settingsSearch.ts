@@ -405,6 +405,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "composer-cache-hit-rate",
+    title: msg("Composer cache hit rate"),
+    to: "/settings/appearance",
+    searchTerms: [msg("prompt cache hit rate composer footer thread agents tokens")],
+  },
+  {
     id: "effort-display",
     title: msg("Effort display"),
     to: "/settings/appearance",

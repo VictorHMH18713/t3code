@@ -438,6 +438,35 @@ export function AppearanceSettingsPanel() {
             />
           }
         />
+        <SettingsRow
+          {...searchableSetting("composer-cache-hit-rate")}
+          description={gt(
+            "Show each agent's prompt cache hit rate for the current thread below the composer.",
+          )}
+          resetAction={
+            settings.composerCacheHitRateEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.composerCacheHitRateEnabled ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset composer cache hit rate to default")}
+                onClick={() =>
+                  updateSettings({
+                    composerCacheHitRateEnabled:
+                      DEFAULT_UNIFIED_SETTINGS.composerCacheHitRateEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.composerCacheHitRateEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ composerCacheHitRateEnabled: Boolean(checked) })
+              }
+              aria-label={gt("Composer cache hit rate")}
+            />
+          }
+        />
         <AdvancedSettings
           targetIds={[
             searchableSetting("panel-animations").id,

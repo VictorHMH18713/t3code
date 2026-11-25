@@ -210,6 +210,8 @@ import { GuestPendingMessages } from "./chat/GuestShareControls";
 import { useDeviceState } from "~/state/device";
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
 import { ComposerContextPermissions } from "./ComposerContextPermissions";
+import { ComposerCacheStrip } from "./chat/ComposerCacheStrip";
+import { deriveThreadAgentCacheStats } from "./chat/ComposerCacheStrip.logic";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import { isEditableFocused } from "../lib/editableFocus";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
@@ -1922,6 +1924,16 @@ export default function ChatView(props: ChatViewProps) {
       isGitRepo,
       showEnvironmentIndicator: showComposerEnvironmentIndicator,
     });
+  const composerCacheEntries =
+    !embedded && settings.composerCacheHitRateEnabled && serverProjection !== null
+      ? deriveThreadAgentCacheStats({
+          providerThreads: serverProjection.providerThreads,
+          providerTurns: serverProjection.providerTurns,
+          providers: providerStatuses,
+          activeProviderThreadId: serverProjection.thread.activeProviderThreadId,
+        })
+      : [];
+  const showComposerCacheStrip = composerCacheEntries.length > 0;
   const terminalShortcutLabelOptions = {
     context: {
       terminalFocus: true,
@@ -3820,7 +3832,9 @@ export default function ChatView(props: ChatViewProps) {
                   >
                     <ChildThreadApprovals threadRef={activeThreadRef} />
                     <div className="relative">
-                      <ComposerSurface.Shell contextRow={showComposerContextStrip}>
+                      <ComposerSurface.Shell
+                        contextRow={showComposerContextStrip || showComposerCacheStrip}
+                      >
                         <ComposerSurface.Host
                           inert={queuedRunEdit.isSaving}
                           aria-busy={queuedRunEdit.isSaving}
@@ -4081,6 +4095,14 @@ export default function ChatView(props: ChatViewProps) {
                                 />
                               </div>
                             )}
+                            {showComposerCacheStrip ? (
+                              <div className="pointer-events-auto">
+                                <ComposerCacheStrip
+                                  entries={composerCacheEntries}
+                                  hasContextRowAbove={showComposerContextStrip}
+                                />
+                              </div>
+                            ) : null}
                           </div>
                         </div>
                       </ComposerSurface.Shell>
