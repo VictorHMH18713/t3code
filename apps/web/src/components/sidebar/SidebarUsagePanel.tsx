@@ -20,7 +20,7 @@ import { useUsage } from "../../state/usage";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { RefreshIcon } from "../ui/refresh-icon";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { barColor } from "../usage/UsageLimits";
 import {
   COMPACT_QUOTA_VIEWS,
@@ -294,128 +294,132 @@ export const SidebarUsagePanel = memo(function SidebarUsagePanel() {
 
   if (collapsed) {
     return (
-      <div
-        data-sidebar-usage-panel="collapsed"
-        className="flex h-7 items-center gap-1 rounded-lg border border-sidebar-border/70 bg-sidebar-control-surface/65 px-2 text-2xs text-sidebar-foreground select-none"
-      >
-        <div className="flex min-w-0 flex-1 items-center gap-1.5">
-          <ChartNoAxesColumnIcon
-            aria-hidden
-            className="size-3 shrink-0 text-sidebar-muted-foreground"
-          />
-          <span className="shrink-0 text-3xs text-sidebar-muted-foreground">
-            {VIEW_LABEL[view]}
-          </span>
-          <span className="truncate font-medium tabular-nums">
-            {collapsedSummary || gt("Usage")}
-          </span>
-        </div>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                onClick={() => setCollapsed(false)}
-                aria-label={gt("Expand live usage panel")}
-                className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-              />
-            }
-          >
-            <ChevronUpIcon aria-hidden className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipPopup side="top">{gt("Expand live usage")}</TooltipPopup>
-        </Tooltip>
-      </div>
-    );
-  }
-
-  return (
-    <section
-      aria-label={gt("Live usage summary")}
-      data-sidebar-usage-panel="expanded"
-      className="flex flex-col gap-1.5 rounded-lg border border-sidebar-border/75 bg-sidebar-control-surface/65 px-2 py-1.5 text-xs text-sidebar-foreground select-none"
-    >
-      <div className="flex items-center gap-1">
-        <span
-          aria-hidden
-          className={cn(
-            "ms-1 size-1.5 shrink-0 rounded-full",
-            hasConnectedEnvironment ? "bg-success" : "bg-sidebar-muted-foreground/50",
-          )}
-        />
+      <TooltipProvider delay={150} closeDelay={100}>
         <div
-          role="group"
-          aria-label={gt("Quota window")}
-          className="flex items-center gap-0.5 rounded-md bg-sidebar-row-hover/60 p-0.5"
+          data-sidebar-usage-panel="collapsed"
+          className="flex h-7 items-center gap-1 rounded-lg border border-sidebar-border/70 bg-sidebar-control-surface/65 px-2 text-2xs text-sidebar-foreground select-none"
         >
-          {COMPACT_QUOTA_VIEWS.map((option) => (
-            <button
-              key={option}
-              type="button"
-              aria-pressed={view === option}
-              onClick={() => setView(option)}
-              className={cn(
-                "cursor-pointer rounded px-1.5 py-0.5 text-3xs leading-none font-medium tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                view === option
-                  ? "bg-background text-foreground shadow-xs"
-                  : "text-sidebar-muted-foreground hover:text-sidebar-foreground",
-              )}
-            >
-              {VIEW_LABEL[option]}
-            </button>
-          ))}
-        </div>
-        <div className="ms-auto flex items-center gap-0.5">
+          <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            <ChartNoAxesColumnIcon
+              aria-hidden
+              className="size-3 shrink-0 text-sidebar-muted-foreground"
+            />
+            <span className="shrink-0 text-3xs text-sidebar-muted-foreground">
+              {VIEW_LABEL[view]}
+            </span>
+            <span className="truncate font-medium tabular-nums">
+              {collapsedSummary || gt("Usage")}
+            </span>
+          </div>
           <Tooltip>
             <TooltipTrigger
               render={
                 <button
                   type="button"
-                  onClick={() => runRefresh(false)}
-                  disabled={isRefreshing || !hasConnectedEnvironment}
-                  aria-label={gt("Refresh live usage")}
-                  className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:opacity-40"
-                />
-              }
-            >
-              <RefreshIcon size="xs" refreshing={isRefreshing} />
-            </TooltipTrigger>
-            <TooltipPopup side="top">{gt("Refresh usage")}</TooltipPopup>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  onClick={() => setCollapsed(true)}
-                  aria-label={gt("Collapse live usage panel")}
+                  onClick={() => setCollapsed(false)}
+                  aria-label={gt("Expand live usage panel")}
                   className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                 />
               }
             >
-              <ChevronDownIcon aria-hidden className="size-3.5" />
+              <ChevronUpIcon aria-hidden className="size-3.5" />
             </TooltipTrigger>
-            <TooltipPopup side="top">{gt("Collapse to compact bar")}</TooltipPopup>
+            <TooltipPopup side="top">{gt("Expand live usage")}</TooltipPopup>
           </Tooltip>
         </div>
-      </div>
+      </TooltipProvider>
+    );
+  }
 
-      {groups.length > 0 ? (
-        <div className="flex flex-col gap-1.5">
-          {groups.map((group) => (
-            <ProviderQuotaGroup
-              key={group.driver}
-              group={group}
-              now={now}
-              statsPeriodLabel={statsPeriodLabel}
-            />
-          ))}
+  return (
+    <TooltipProvider delay={150} closeDelay={100}>
+      <section
+        aria-label={gt("Live usage summary")}
+        data-sidebar-usage-panel="expanded"
+        className="flex flex-col gap-1.5 rounded-lg border border-sidebar-border/75 bg-sidebar-control-surface/65 px-2 py-1.5 text-xs text-sidebar-foreground select-none"
+      >
+        <div className="flex items-center gap-1">
+          <span
+            aria-hidden
+            className={cn(
+              "ms-1 size-1.5 shrink-0 rounded-full",
+              hasConnectedEnvironment ? "bg-success" : "bg-sidebar-muted-foreground/50",
+            )}
+          />
+          <div
+            role="group"
+            aria-label={gt("Quota window")}
+            className="flex items-center gap-0.5 rounded-md bg-sidebar-row-hover/60 p-0.5"
+          >
+            {COMPACT_QUOTA_VIEWS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                aria-pressed={view === option}
+                onClick={() => setView(option)}
+                className={cn(
+                  "cursor-pointer rounded px-1.5 py-0.5 text-3xs leading-none font-medium tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                  view === option
+                    ? "bg-background text-foreground shadow-xs"
+                    : "text-sidebar-muted-foreground hover:text-sidebar-foreground",
+                )}
+              >
+                {VIEW_LABEL[option]}
+              </button>
+            ))}
+          </div>
+          <div className="ms-auto flex items-center gap-0.5">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    onClick={() => runRefresh(false)}
+                    disabled={isRefreshing || !hasConnectedEnvironment}
+                    aria-label={gt("Refresh live usage")}
+                    className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:opacity-40"
+                  />
+                }
+              >
+                <RefreshIcon size="xs" refreshing={isRefreshing} />
+              </TooltipTrigger>
+              <TooltipPopup side="top">{gt("Refresh usage")}</TooltipPopup>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    onClick={() => setCollapsed(true)}
+                    aria-label={gt("Collapse live usage panel")}
+                    className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                  />
+                }
+              >
+                <ChevronDownIcon aria-hidden className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipPopup side="top">{gt("Collapse to compact bar")}</TooltipPopup>
+            </Tooltip>
+          </div>
         </div>
-      ) : (
-        <div className="px-1 py-1 text-left text-2xs text-sidebar-muted-foreground">
-          {gt("No quota data for this window")}
-        </div>
-      )}
-    </section>
+
+        {groups.length > 0 ? (
+          <div className="flex flex-col gap-1.5">
+            {groups.map((group) => (
+              <ProviderQuotaGroup
+                key={group.driver}
+                group={group}
+                now={now}
+                statsPeriodLabel={statsPeriodLabel}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="px-1 py-1 text-left text-2xs text-sidebar-muted-foreground">
+            {gt("No quota data for this window")}
+          </div>
+        )}
+      </section>
+    </TooltipProvider>
   );
 });
