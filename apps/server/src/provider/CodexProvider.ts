@@ -60,6 +60,13 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import packageJson from "../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
+const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
+
+const isCodexAccountReadTimeoutError = (
+  error: CodexErrors.CodexAppServerError,
+): error is CodexErrors.CodexAppServerRequestError =>
+  isCodexAppServerRequestError(error) &&
+  /workspace routing discovery timed out|timed out/i.test(error.errorMessage);
 
 type CodexRateLimitsProbe =
   | {
@@ -141,8 +148,8 @@ const CODEX_CATALOG_REFRESH_TIMEOUT_MS = 3_000;
 const CODEX_CONFIG_PROBE_TIMEOUT_MS = 3_000;
 const CODEX_CATALOG_REFRESH_POLL = "100 millis" as const;
 const CODEX_CLIENT_NAME = "T3 Code";
-// Handshake plus account/models/skills requests can exceed the shared 10s probe budget.
-const CODEX_AUTH_PROBE_TIMEOUT_MS = 20_000;
+// Handshake plus account/models/skills requests (and one account/read retry on slow proxies) can exceed 20s.
+const CODEX_AUTH_PROBE_TIMEOUT_MS = 45_000;
 const CODEX_DISCOVERY_MARGIN_MS = 250;
 // `codex-cli 0.159.0`, `codex-cli 0.160.0-alpha.1` or the npm CLI's bare `0.1.4161006`.
 // Keep a prerelease suffix so compatibility stays unknown for it, as it does for `initialize`.
@@ -756,7 +763,15 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   const versionMatch = initialize.userAgent.match(/\/([^\s]+)/);
   const version = versionMatch ? versionMatch[1] : undefined;
 
-  const accountResponse = yield* client.request("account/read", {});
+  // Codex runs workspace routing discovery on startup with a 15s cap; on slow proxies it may
+  // time out once while finishing in the background, so retrying in the same process succeeds.
+  const accountResponse = yield* client.request("account/read", {}).pipe(
+    Effect.catchIf(isCodexAccountReadTimeoutError, (error) =>
+      Effect.logDebug("Codex account/read timed out during startup; retrying once.", {
+        error: error.errorMessage,
+      }).pipe(Effect.andThen(client.request("account/read", {}))),
+    ),
+  );
   if (!accountResponse.account && accountResponse.requiresOpenaiAuth) {
     return {
       account: accountResponse,

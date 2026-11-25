@@ -1014,6 +1014,88 @@ it.layer(
       }),
     );
 
+    it.effect(
+      "retries Codex account/read once in the same probe process after workspace routing discovery timeout",
+      () =>
+        Effect.gen(function* () {
+          let accountReadCalls = 0;
+          const discoveryStarted = yield* Deferred.make<void>();
+          const spawner = ChildProcessSpawner.make(() =>
+            Effect.gen(function* () {
+              const output = yield* Queue.unbounded<Uint8Array>();
+              const send = (message: unknown) =>
+                Queue.offer(output, encoder.encode(`${JSON.stringify(message)}\n`));
+              const results: Record<string, unknown> = {
+                initialize: {
+                  userAgent: "codex_cli_rs/0.167.0",
+                  codexHome: "/nonexistent-codex-home",
+                  platformFamily: "unix",
+                  platformOs: "linux",
+                },
+                "config/read": { config: {}, origins: {} },
+                "skills/list": { data: [] },
+                "model/list": { data: [] },
+              };
+              const answer = (line: string) => {
+                const { id, method } = JSON.parse(line) as { id?: number; method?: string };
+                if (id === undefined || method === undefined) return Effect.void;
+                if (method === "account/read") {
+                  accountReadCalls += 1;
+                  if (accountReadCalls === 1) {
+                    return send({
+                      id,
+                      error: {
+                        code: -32603,
+                        message: "workspace routing discovery timed out after 15s",
+                      },
+                    });
+                  }
+                  return send({
+                    id,
+                    result: {
+                      account: { type: "chatgpt", email: "test@example.com", planType: "pro" },
+                      requiresOpenaiAuth: true,
+                    },
+                  });
+                }
+                if (method === "config/read") {
+                  return Deferred.succeed(discoveryStarted, undefined).pipe(
+                    Effect.andThen(send({ id, result: results[method] ?? {} })),
+                  );
+                }
+                return send({ id, result: results[method] ?? {} });
+              };
+              const decoder = new TextDecoder();
+              let buffered = "";
+              return ChildProcessSpawner.makeHandle({
+                ...mockHandle({ stdout: "", stderr: "", code: 0 }),
+                exitCode: Effect.never,
+                isRunning: Effect.succeed(true),
+                stdin: Sink.forEach((chunk: Uint8Array) => {
+                  buffered += decoder.decode(chunk, { stream: true });
+                  const lines = buffered.split("\n");
+                  buffered = lines.pop() ?? "";
+                  return Effect.forEach(lines.filter(Boolean), answer, { discard: true });
+                }),
+                stdout: Stream.fromQueue(output),
+              });
+            }),
+          );
+
+          const fiber = yield* checkCodexProviderStatus(defaultCodexSettings).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.forkChild,
+          );
+          yield* Deferred.await(discoveryStarted);
+          yield* TestClock.adjust("5 seconds");
+          const status = yield* Fiber.join(fiber);
+
+          assert.strictEqual(accountReadCalls, 2);
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.auth.status, "authenticated");
+        }),
+    );
+
     it.effect("does not run --version when the Codex executable cannot start", () =>
       Effect.gen(function* () {
         if ((yield* HostProcess.Platform) === "win32") return;

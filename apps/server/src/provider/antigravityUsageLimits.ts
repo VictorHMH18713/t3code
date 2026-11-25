@@ -345,7 +345,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       Effect.provideService(FetchHttpClient.RequestInit, MANUAL_REDIRECT),
       Effect.flatMap(HttpClientResponse.filterStatusOk),
       Effect.flatMap((response) => response.json),
-      Effect.timeout("10 seconds"),
+      Effect.timeout("25 seconds"),
     );
   const read = Effect.gen(function* () {
     const startedGeneration = generation;
@@ -484,7 +484,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   });
   const probe = read.pipe(
     Effect.provideService(Digest.Digest, crypto),
-    Effect.timeout("30 seconds"),
+    Effect.timeout("60 seconds"),
     Effect.catch(() =>
       Effect.gen(function* () {
         return makeUnavailableUsageLimits({
