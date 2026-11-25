@@ -5,7 +5,7 @@ import { memo } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useAtomValue } from "@effect/atom-react";
-import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
+import { useClientSettings, useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { shortcutLabelForCommand } from "../../keybindings";
 import {
   navigateHistory,
@@ -315,11 +315,14 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
 });
 
 export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
+  const sidebarUsagePanelEnabled = useClientSettings(
+    (settings) => settings.sidebarUsagePanelEnabled,
+  );
   return (
     <SidebarFooter>
       <SidebarProviderUpdatePill />
       <SidebarUpdateArchitectureWarning />
-      <SidebarUsagePanel />
+      {sidebarUsagePanelEnabled ? <SidebarUsagePanel /> : null}
       <SidebarUtilityMenu />
     </SidebarFooter>
   );
