@@ -198,7 +198,9 @@ jobs:
           ### Changes in this build
           - **Sidebar Live Usage Panel**: Compact live usage & quota panel docked in the sidebar footer (`5h` / `7d` / `All` switcher, strictly grouped per provider with tokens & prompt-cache hit rate, non-clickable display with fast 150ms hover tooltips, collapsible 1-line bar).
           - **Composer Prompt-Cache Hit-Rate Strip**: Per-agent prompt-cache hit-rate badges directly below the composer for the current thread (with fast hover breakdown of cached/input/write tokens, turns, and latest-turn rate).
-          - **Settings → Appearance → Interface**: Added independent toggles to show or hide the sidebar live usage panel and the composer cache hit-rate strip.
+          - **Settings → Appearance → Interface**: Independent toggles to show or hide the sidebar live usage panel and the composer cache hit-rate strip.
+          - **Slow-network provider resilience**: Retries Codex `account/read` once in the same probe process on startup `workspace routing discovery timed out`, extends Codex/Claude capability probe budgets (45s) & usage timeouts (20s), and extends Antigravity usage/OAuth probe timeouts (25s per request / 60s total).
+          - Rebased onto `pingdotgg/t3code` `main` (`024da4f7`).
 
           ### Install notes (unsigned builds)
           - **macOS (Apple Silicon `.dmg`)**: If macOS Gatekeeper blocks the unsigned app on first launch, run `xattr -cr "/Applications/T3 Code (Beta).app"` (or Right-click → Open).
