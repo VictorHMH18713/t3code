@@ -576,9 +576,51 @@ export const AntigravityDriver: ProviderDriver<
       };
     });
 
+    const renewSignIn =
+      auth.authMethod === "oauth-personal" || auth.authMethod === "oauth-business"
+        ? Effect.gen(function* () {
+            const processScope = yield* Scope.make();
+            yield* Effect.addFinalizer((exit) => Scope.close(processScope, exit));
+            return yield* authFlow
+              .withProcess(
+                Scope.close(processScope, Exit.void),
+                Effect.gen(function* () {
+                  const cwd = yield* fileSystem.makeTempDirectoryScoped({
+                    prefix: "t3-antigravity-renew-",
+                  });
+                  const runtime = yield* makeRuntime({
+                    cwd,
+                    mcpServers: [],
+                    // Never launch an interactive browser sign-in flow during a background quota probe.
+                    onAuthorizationUrl: () =>
+                      Effect.fail(
+                        new AcpErrors.AcpTransportError({
+                          detail: "Interactive sign-in required.",
+                          cause: undefined,
+                        }),
+                      ),
+                  });
+                  yield* runtime.initialize();
+                  if (!runtime.authenticate) return false;
+                  yield* runtime.authenticate(auth.authMethod);
+                  return true;
+                }),
+              )
+              .pipe(Effect.provideService(Scope.Scope, processScope));
+          }).pipe(
+            Effect.scoped,
+            Effect.timeoutOrElse({
+              duration: "30 seconds",
+              orElse: () => Effect.succeed(false),
+            }),
+            Effect.orElseSucceed(() => false),
+          )
+        : undefined;
+
     const usage = yield* makeAntigravityUsageProbe({
       profileDirectory,
       authMethod: auth.authMethod,
+      ...(renewSignIn ? { renewSignIn } : {}),
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),

@@ -34,6 +34,7 @@ const SUMMARY_WINDOW_MINS = new Map([
   ["weekly", 7 * 24 * 60],
 ]);
 const MANUAL_REDIRECT: RequestInit = { redirect: "manual" };
+const RENEW_FAILURE_COOLDOWN_MS = 15 * 60_000;
 const TokenFile = Schema.Struct({
   client_id: Schema.NonEmptyString,
   client_secret: Schema.NonEmptyString,
@@ -321,6 +322,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   readonly profileDirectory: string;
   readonly authMethod: AntigravitySettings["authMethod"];
   readonly readKeyringSecret?: Effect.Effect<string | undefined, AntigravityKeyringError>;
+  readonly renewSignIn?: Effect.Effect<boolean>;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -338,7 +340,19 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   let cached:
     | { fingerprint: string; account: string; accessToken: string; expiresAt: number }
     | undefined;
+  let lastRenewFailureAt: number | undefined;
   let generation = 0;
+
+  const readCliStoredToken = Effect.fn("AntigravityUsageProbe.readCliStoredToken")(function* () {
+    // Google account instances bypass the keyring, whose one entry every profile shares.
+    const stored = (yield* fs.exists(cliTokenPath))
+      ? yield* fs.readFileString(cliTokenPath)
+      : input.authMethod === "oauth-business"
+        ? yield* readKeyringSecret
+        : undefined;
+    if (stored === undefined) return undefined;
+    return yield* decodeCliToken(stored);
+  });
 
   const request = (request: HttpClientRequest.HttpClientRequest) =>
     client.execute(request).pipe(
@@ -359,27 +373,46 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     let projectId: string | undefined;
     if (!(yield* fs.exists(tokenPath))) {
       cached = undefined;
-      // Google account instances bypass the keyring, whose one entry every profile shares.
-      const stored = (yield* fs.exists(cliTokenPath))
-        ? yield* fs.readFileString(cliTokenPath)
-        : input.authMethod === "oauth-business"
-          ? yield* readKeyringSecret
-          : undefined;
-      if (stored === undefined) {
+      const decodedCli = yield* readCliStoredToken();
+      if (decodedCli === undefined) {
         return makeUnavailableUsageLimits({
           checkedAt,
           reason: "unsupported",
           message: "Sign in with Google to see Antigravity limits.",
         });
       }
-      const { token } = yield* decodeCliToken(stored);
+      let token = decodedCli.token;
       if (!(Date.parse(token.expiry ?? "") > now + 60_000)) {
-        return makeUnavailableUsageLimits({
-          checkedAt,
-          reason: "probeFailed",
-          message:
-            "Antigravity's saved sign-in has expired. Start an Antigravity turn to renew it, then refresh limits.",
-        });
+        const canRenew =
+          input.renewSignIn !== undefined &&
+          Boolean(token.refresh_token?.trim()) &&
+          (lastRenewFailureAt === undefined ||
+            now - lastRenewFailureAt >= RENEW_FAILURE_COOLDOWN_MS);
+        let renewedToken: typeof CliToken.Type | undefined;
+        if (canRenew && input.renewSignIn) {
+          const renewed = yield* input.renewSignIn.pipe(Effect.orElseSucceed(() => false));
+          if (renewed && generation === startedGeneration) {
+            const candidate = yield* readCliStoredToken().pipe(
+              Effect.orElseSucceed(() => undefined),
+            );
+            const refreshedAt = yield* Clock.currentTimeMillis;
+            if (candidate && Date.parse(candidate.token.expiry ?? "") > refreshedAt + 60_000) {
+              renewedToken = candidate;
+            }
+          }
+          if (generation === startedGeneration) {
+            lastRenewFailureAt = renewedToken ? undefined : now;
+          }
+        }
+        if (!renewedToken) {
+          return makeUnavailableUsageLimits({
+            checkedAt,
+            reason: "probeFailed",
+            message:
+              "Antigravity's saved sign-in has expired. Start an Antigravity turn to renew it, then refresh limits.",
+          });
+        }
+        token = renewedToken.token;
       }
       accessToken = token.access_token;
       account = yield* request(
@@ -499,6 +532,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     probe,
     clear: Effect.sync(() => {
       cached = undefined;
+      lastRenewFailureAt = undefined;
       generation++;
     }),
   };

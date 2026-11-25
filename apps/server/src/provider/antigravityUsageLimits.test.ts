@@ -74,6 +74,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     keyringSecret?: string;
     /** Reads the OS keyring instead of `keyringSecret`. */
     nativeKeyring?: boolean;
+    renewSignIn?: Effect.Effect<boolean>;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -141,6 +142,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     profileDirectory,
     authMethod: options.authMethod ?? "oauth-personal",
     ...(options.nativeKeyring ? {} : { readKeyringSecret: Effect.succeed(options.keyringSecret) }),
+    ...(options.renewSignIn ? { renewSignIn: options.renewSignIn } : {}),
   }).pipe(Effect.provideService(HttpClient.HttpClient, http));
   return { ...usage, requests, writeToken, tokenPath };
 });
@@ -781,6 +783,122 @@ describe("Antigravity subscription limits", () => {
         expect((yield* probe).unavailable?.reason).toBe("unsupported");
         expect(requests).toEqual([]);
       }
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("renews an expired CLI sign-in once before probing quota limits", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")));
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      let renewCalls = 0;
+      let cliTokenPath = "";
+      const { probe, tokenPath } = yield* fixture({
+        missingToken: true,
+        renewSignIn: Effect.suspend(() => {
+          renewCalls += 1;
+          return fs
+            .writeFileString(
+              cliTokenPath,
+              JSON.stringify({
+                token: {
+                  access_token: "access-token",
+                  refresh_token: "refresh-a",
+                  expiry: "2026-10-09T13:00:00Z",
+                },
+              }),
+            )
+            .pipe(Effect.as(true), Effect.orDie);
+        }),
+      });
+      cliTokenPath = path.join(path.dirname(tokenPath), "antigravity-oauth-token");
+      yield* fs.writeFileString(
+        cliTokenPath,
+        JSON.stringify({
+          token: {
+            access_token: "stale-access-token",
+            refresh_token: "refresh-a",
+            expiry: "2026-10-09T11:50:00Z",
+          },
+        }),
+      );
+
+      const limits = yield* probe;
+      expect(renewCalls).toBe(1);
+      expect(limits.unavailable).toBeUndefined();
+      expect(limits.windows).toHaveLength(4);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("enforces a 15-minute cooldown when CLI sign-in renewal fails", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")));
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      let renewCalls = 0;
+      const { probe, tokenPath, requests } = yield* fixture({
+        missingToken: true,
+        renewSignIn: Effect.sync(() => {
+          renewCalls += 1;
+          return false;
+        }),
+      });
+      yield* fs.writeFileString(
+        path.join(path.dirname(tokenPath), "antigravity-oauth-token"),
+        JSON.stringify({
+          token: {
+            access_token: "stale-access-token",
+            refresh_token: "refresh-a",
+            expiry: "2026-10-09T11:50:00Z",
+          },
+        }),
+      );
+
+      const first = yield* probe;
+      expect(first.unavailable?.reason).toBe("probeFailed");
+      expect(renewCalls).toBe(1);
+
+      yield* TestClock.adjust("5 minutes");
+      const second = yield* probe;
+      expect(second.unavailable?.reason).toBe("probeFailed");
+      expect(renewCalls).toBe(1);
+
+      yield* TestClock.adjust("10 minutes");
+      const third = yield* probe;
+      expect(third.unavailable?.reason).toBe("probeFailed");
+      expect(renewCalls).toBe(2);
+      expect(requests).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("skips CLI sign-in renewal when the stored token is still valid", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")));
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      let renewCalls = 0;
+      const { probe, tokenPath } = yield* fixture({
+        missingToken: true,
+        renewSignIn: Effect.sync(() => {
+          renewCalls += 1;
+          return true;
+        }),
+      });
+      yield* fs.writeFileString(
+        path.join(path.dirname(tokenPath), "antigravity-oauth-token"),
+        JSON.stringify({
+          token: {
+            access_token: "access-token",
+            refresh_token: "refresh-a",
+            expiry: "2026-10-09T13:00:00Z",
+          },
+        }),
+      );
+
+      const limits = yield* probe;
+      expect(renewCalls).toBe(0);
+      expect(limits.unavailable).toBeUndefined();
+      expect(limits.windows).toHaveLength(4);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });
