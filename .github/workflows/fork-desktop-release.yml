@@ -274,6 +274,9 @@ jobs:
           Unofficial personal fork build (not affiliated with or endorsed by T3 Tools, Inc.).
 
           ### Changes in this build
+          - **Quota fallback & cache retention**: Preserves last known quota values across server/client when a probe fails, times out, or reconnects (persisted in `localStorage` on web/desktop and kept in memory on mobile/server), while still clearing on disable, sign-out, `unsupported`, or account switch.
+          - **Antigravity metered-host fix**: Stops falling back to the unmetered secondary endpoint (`cloudcode-pa` for personal / `daily-cloudcode-pa` for business) when the primary metered host fails, preventing bogus four-`100%` quota readings from overwriting real quota.
+          - **Responsive manual quota refresh**: Explicit refresh clicks pass `fresh: true` to bypass Claude's 5-minute probe cache, run hub & provider refreshes in parallel on the server, and cap sidebar button lock duration (30s) so a slow remote environment cannot freeze manual refresh.
           - **Antigravity expired sign-in renewal**: When `antigravity-oauth-token` expires after >1h idle and `refresh_token` is present, quota probes silently renew the CLI token via `agy` (`initialize` + `authenticate`) without starting a session or spending quota, with a 15-minute failure cooldown.
           - **Sidebar Live Usage Panel**: Compact live usage & quota panel docked in the sidebar footer (`5h` / `7d` / `All` switcher, strictly grouped per provider with tokens & prompt-cache hit rate, non-clickable display with fast 150ms hover tooltips, collapsible 1-line bar).
           - **Composer Prompt-Cache Hit-Rate Strip**: Per-agent prompt-cache hit-rate badges directly below the composer for the current thread (with fast hover breakdown of cached/input/write tokens, turns, and latest-turn rate).
