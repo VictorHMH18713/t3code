@@ -10,6 +10,7 @@ import { Atom } from "effect/reactivity";
 import { environmentCatalog } from "../connection/catalog";
 import { serverEnvironment } from "./server";
 import { expectsPrimaryEnvironment } from "./shell";
+import { createPresentationsWithCachedLimitsAtom } from "./usageLimitsCache";
 
 export const environmentPresentations = createEnvironmentPresentationAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
@@ -20,6 +21,13 @@ export const environmentPresentations = createEnvironmentPresentationAtoms({
 export const environmentSummaries = createEnvironmentSummaryAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   presentationAtom: environmentPresentations.presentationAtom,
+});
+
+export const presentationsWithCachedLimitsAtom = createPresentationsWithCachedLimitsAtom({
+  presentationsAtom: environmentPresentations.presentationsWithProvidersAtom,
+  isCatalogReadyAtom: Atom.make((get) => get(environmentCatalog.catalogValueAtom).isReady).pipe(
+    Atom.withLabel("web-environment-catalog-ready"),
+  ),
 });
 
 const EMPTY_ENVIRONMENT_PRESENTATION_ATOM = Atom.make<EnvironmentPresentation | null>(null).pipe(

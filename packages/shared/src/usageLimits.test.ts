@@ -23,6 +23,7 @@ import {
   exhaustedUsageWindow,
   paceOf,
   paceRemainingPercent,
+  resolvePresentationsWithUsageLimitsCache,
   usesChatGptSharing,
   resolveNewThreadModelSelection,
 } from "./usageLimits.ts";
@@ -2035,5 +2036,194 @@ describe("ChatGPT sharing presentation", () => {
         auth: { status: "unauthenticated", subscriptionSharing: true },
       }),
     ).toBe(false);
+  });
+});
+
+describe("resolvePresentationsWithUsageLimitsCache", () => {
+  it("keeps last known limits on failed or empty probes, while connecting, and across shared emails", () => {
+    const localEnv = EnvironmentId.make("local");
+    const remoteEnv = EnvironmentId.make("remote");
+    const validLimits = {
+      checkedAt: "2026-09-03T12:00:00.000Z",
+      windows: [window],
+    };
+    const initial = new Map([
+      [
+        localEnv,
+        {
+          entry: { target: { label: "Local" } },
+          serverConfig: {
+            providers: [
+              provider({
+                auth: { status: "authenticated", email: "user@example.com", label: "Pro" },
+                usageLimits: validLimits,
+              }),
+            ],
+          },
+        },
+      ],
+      [
+        remoteEnv,
+        {
+          entry: { target: { label: "WSL2" } },
+          serverConfig: {
+            providers: [
+              provider({
+                auth: { status: "authenticated", email: "user@example.com", label: "Pro" },
+                usageLimits: validLimits,
+              }),
+            ],
+          },
+        },
+      ],
+    ]);
+
+    const first = resolvePresentationsWithUsageLimitsCache(initial, {});
+    expect(first.changed).toBe(true);
+    expect(collectLimitAccounts(first.presentations)).toHaveLength(1);
+
+    // Remote probe times out with unknown auth & no usageLimits; local server still connecting.
+    const transientFailure = new Map([
+      [
+        localEnv,
+        {
+          entry: { target: { label: "Local" } },
+          serverConfig: null,
+        },
+      ],
+      [
+        remoteEnv,
+        {
+          entry: { target: { label: "WSL2" } },
+          serverConfig: {
+            providers: [
+              provider({
+                status: "error",
+                auth: { status: "unknown" },
+                usageLimits: {
+                  checkedAt: "2026-09-03T12:05:00.000Z",
+                  windows: [],
+                  unavailable: { reason: "probeFailed" },
+                },
+              }),
+            ],
+          },
+        },
+      ],
+    ]);
+
+    const recovered = resolvePresentationsWithUsageLimitsCache(transientFailure, first.nextCache);
+    expect(recovered.changed).toBe(false);
+    expect(collectLimitNotices(recovered.presentations)).toEqual([]);
+    const accounts = collectLimitAccounts(recovered.presentations);
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]?.environments.map((env) => env.environmentId)).toEqual([
+      localEnv,
+      remoteEnv,
+    ]);
+    expect(accounts[0]?.limits).toEqual(validLimits);
+
+    // Signing out or switching to unsupported clears cache cleanly.
+    const signedOut = new Map([
+      [
+        remoteEnv,
+        {
+          entry: { target: { label: "WSL2" } },
+          serverConfig: {
+            providers: [
+              provider({
+                auth: { status: "unauthenticated" },
+                usageLimits: undefined,
+              }),
+            ],
+          },
+        },
+      ],
+    ]);
+    const cleared = resolvePresentationsWithUsageLimitsCache(signedOut, recovered.nextCache);
+    expect(cleared.changed).toBe(true);
+    expect(cleared.nextCache).toEqual({});
+    expect(collectLimitAccounts(cleared.presentations)).toEqual([]);
+  });
+
+  it("clears cache on account switch or disable, and recovers hub accounts on error", () => {
+    const env = EnvironmentId.make("local");
+    const validLimits = {
+      checkedAt: "2026-09-03T12:00:00.000Z",
+      windows: [window],
+    };
+    const hubAccount: UsageLimitSourceAccount = {
+      id: "hub-acc-1",
+      driver: ProviderDriverKind.make("codex"),
+      email: "hub@example.com",
+      usageLimits: validLimits,
+    };
+    const first = resolvePresentationsWithUsageLimitsCache(
+      new Map([
+        [
+          env,
+          {
+            entry: { target: { label: "Local" } },
+            serverConfig: {
+              providers: [
+                provider({
+                  auth: { status: "authenticated", email: "a@example.com" },
+                  usageLimits: validLimits,
+                }),
+              ],
+              usageLimitSources: [
+                {
+                  id: UsageLimitSourceId.make("cli-proxy"),
+                  kind: "cliproxy",
+                  label: "CLI Proxy",
+                  checkedAt: "2026-09-03T12:00:00.000Z",
+                  accounts: [hubAccount],
+                },
+              ],
+            },
+          },
+        ],
+      ]),
+      {},
+    );
+
+    const switchedAndHubError = resolvePresentationsWithUsageLimitsCache(
+      new Map([
+        [
+          env,
+          {
+            entry: { target: { label: "Local" } },
+            serverConfig: {
+              providers: [
+                provider({
+                  auth: { status: "authenticated", email: "b@example.com" },
+                  usageLimits: {
+                    checkedAt: "2026-09-03T12:05:00.000Z",
+                    windows: [],
+                    unavailable: { reason: "probeFailed" },
+                  },
+                }),
+              ],
+              usageLimitSources: [
+                {
+                  id: UsageLimitSourceId.make("cli-proxy"),
+                  kind: "cliproxy",
+                  label: "CLI Proxy",
+                  checkedAt: "2026-09-03T12:05:00.000Z",
+                  accounts: [],
+                  error: "Hub timed out",
+                },
+              ],
+            },
+          },
+        ],
+      ]),
+      first.nextCache,
+    );
+
+    const accounts = collectLimitAccounts(switchedAndHubError.presentations);
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]?.email).toBe("hub@example.com");
+    expect(accounts[0]?.limits).toEqual(validLimits);
   });
 });

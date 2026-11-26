@@ -1030,4 +1030,47 @@ describe("makeManagedServerProvider", () => {
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
+
+  it.effect("preserves previous valid limits when a failed provider probe omits usageLimits", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const completeLimits = {
+          checkedAt: "2026-04-10T00:00:01.000Z",
+          windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent: 35 }],
+        } as const;
+        const probeSnapshot = yield* Ref.make<ServerProvider>({
+          ...refreshedSnapshot,
+          usageLimits: completeLimits,
+        });
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.get(probeSnapshot),
+          refreshOnInterval: false,
+        });
+        yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+
+        yield* Ref.set(probeSnapshot, {
+          ...refreshedSnapshot,
+          status: "error",
+          auth: { status: "unknown" },
+          usageLimits: undefined,
+        });
+        const afterFailure = yield* provider.refresh;
+        assert.deepStrictEqual(afterFailure.usageLimits, completeLimits);
+
+        yield* Ref.set(probeSnapshot, {
+          ...refreshedSnapshot,
+          status: "error",
+          auth: { status: "unauthenticated" },
+          usageLimits: undefined,
+        });
+        const afterSignOut = yield* provider.refresh;
+        assert.strictEqual(afterSignOut.usageLimits, undefined);
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
 });

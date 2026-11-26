@@ -559,15 +559,51 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  it.effect("keeps one endpoint's quotas when the other fails", () =>
+  it.effect("keeps primary metered endpoint quotas when the secondary endpoint fails", () =>
     Effect.gen(function* () {
       const { probe } = yield* fixture({
-        summaryStatusByHost: { "daily-cloudcode-pa.googleapis.com": 503 },
+        summaryStatusByHost: { "cloudcode-pa.googleapis.com": 503 },
       });
       const limits = yield* probe;
       expect(limits.unavailable).toBeUndefined();
       expect(limits.windows).toHaveLength(4);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect(
+    "reports probeFailed instead of untouched 100% buckets when the metered primary endpoint fails",
+    () =>
+      Effect.gen(function* () {
+        const untouchedSummary = {
+          groups: [
+            {
+              buckets: [
+                { bucketId: "gemini-5h", window: "5h", remainingFraction: 1 },
+                { bucketId: "gemini-weekly", window: "weekly", remainingFraction: 1 },
+                { bucketId: "3p-5h", window: "5h", remainingFraction: 1 },
+                { bucketId: "3p-weekly", window: "weekly", remainingFraction: 1 },
+              ],
+            },
+          ],
+        };
+        const personal = yield* fixture({
+          authMethod: "oauth-personal",
+          summaryStatusByHost: { "daily-cloudcode-pa.googleapis.com": 503 },
+          summaryByHost: { "cloudcode-pa.googleapis.com": untouchedSummary },
+        });
+        const personalLimits = yield* personal.probe;
+        expect(personalLimits.unavailable?.reason).toBe("probeFailed");
+        expect(personalLimits.windows).toEqual([]);
+
+        const business = yield* fixture({
+          authMethod: "oauth-business",
+          summaryStatusByHost: { "cloudcode-pa.googleapis.com": 503 },
+          summaryByHost: { "daily-cloudcode-pa.googleapis.com": untouchedSummary },
+        });
+        const businessLimits = yield* business.probe;
+        expect(businessLimits.unavailable?.reason).toBe("probeFailed");
+        expect(businessLimits.windows).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("re-reads changed credentials and clears cached access after sign-out", () =>

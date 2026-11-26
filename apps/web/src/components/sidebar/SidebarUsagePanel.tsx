@@ -14,7 +14,10 @@ import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
-import { environmentPresentations } from "../../state/presentation";
+import {
+  environmentPresentations,
+  presentationsWithCachedLimitsAtom,
+} from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { useUsage } from "../../state/usage";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -36,6 +39,7 @@ const VIEW_STORAGE_KEY = "t3code:sidebar-usage-panel-quota-view:v1";
 const CollapsedSchema = Schema.Boolean;
 const ViewSchema = Schema.Literals(["5h", "7d", "all"]);
 const LIVE_USAGE_REFRESH_INTERVAL_MS = 30_000;
+const REFRESH_LOCK_TIMEOUT_MS = 30_000;
 
 const PACE_COPY = {
   ahead: msg("Ahead of pace"),
@@ -234,13 +238,14 @@ export const SidebarUsagePanel = memo(function SidebarUsagePanel() {
   const presentationsWithProviders = useAtomValue(
     environmentPresentations.presentationsWithProvidersAtom,
   );
+  const presentationsWithCachedLimits = useAtomValue(presentationsWithCachedLimitsAtom);
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
 
   const hasConnectedEnvironment = environments.some((env) => env.isConnected);
   const canReadDiagnostics = environments.some((env) => env.canReadDiagnostics);
-  const groups = selectCompactProviderGroups(presentationsWithProviders, merged, now, view);
+  const groups = selectCompactProviderGroups(presentationsWithCachedLimits, merged, now, view);
   const statsPeriodLabel = view === "7d" ? "7d" : "5h";
 
   const runRefresh = (automatic: boolean) => {
@@ -259,14 +264,22 @@ export const SidebarUsagePanel = memo(function SidebarUsagePanel() {
         tasks.push(
           refreshUsageLimits(
             environmentId,
-            () => refreshProviders({ environmentId, input: {} }),
+            () => refreshProviders({ environmentId, input: automatic ? {} : { fresh: true } }),
             automatic,
           ),
         );
       }
     }
 
-    void settlePromise(() => Promise.all(tasks)).finally(() => {
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const settled = Promise.race([
+      settlePromise(() => Promise.all(tasks)),
+      new Promise<void>((resolve) => {
+        timeoutId = setTimeout(resolve, REFRESH_LOCK_TIMEOUT_MS);
+      }),
+    ]);
+    void settled.finally(() => {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
       refreshingRef.current = false;
       if (!automatic) setIsRefreshing(false);
     });

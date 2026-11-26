@@ -2610,26 +2610,40 @@ export const layerWsRpc = (
                 cwd: input.cwd,
                 fresh: input.fresh,
               });
+            } else if (input.fresh === true && input.cwd === undefined) {
+              const instances = yield* providerInstances.listInstances;
+              yield* Effect.forEach(
+                instances.filter(
+                  (instance) =>
+                    input.instanceId === undefined || input.instanceId === instance.instanceId,
+                ),
+                (instance) => instance.invalidateCaches ?? Effect.void,
+                { concurrency: "unbounded", discard: true },
+              );
             }
             if (input.reloadSecrets === true && input.instanceId === undefined) {
               yield* invalidateSettingsSecrets(secretResolver, serverSettings.getSettings);
             }
             // Await refresh; RPC scope closure would interrupt a fork before the hub answered.
-            if (input.instanceId === undefined) {
-              yield* usageLimitSources.refresh;
-            }
-            let providers = yield* input.cwd !== undefined && input.instanceId !== undefined
-              ? providerRegistry.refreshWorkspaceSnapshot({
-                  instanceId: input.instanceId,
-                  cwd: input.cwd,
-                  scanCwd: yield* projectService.workspaceScanDirectory(input.cwd),
-                  fresh: input.fresh === true,
-                })
-              : input.reloadSecrets === true
-                ? providerRegistry.reloadSecretsAndRefresh(input.instanceId)
-                : input.instanceId !== undefined
-                  ? providerRegistry.refreshInstance(input.instanceId)
-                  : providerRegistry.refresh();
+            const refreshProvidersEffect =
+              input.cwd !== undefined && input.instanceId !== undefined
+                ? providerRegistry.refreshWorkspaceSnapshot({
+                    instanceId: input.instanceId,
+                    cwd: input.cwd,
+                    scanCwd: yield* projectService.workspaceScanDirectory(input.cwd),
+                    fresh: input.fresh === true,
+                  })
+                : input.reloadSecrets === true
+                  ? providerRegistry.reloadSecretsAndRefresh(input.instanceId)
+                  : input.instanceId !== undefined
+                    ? providerRegistry.refreshInstance(input.instanceId)
+                    : providerRegistry.refresh();
+            let providers =
+              input.instanceId === undefined
+                ? (yield* Effect.all([usageLimitSources.refresh, refreshProvidersEffect], {
+                    concurrency: "unbounded",
+                  }))[1]
+                : yield* refreshProvidersEffect;
             if (input.refreshModels) {
               const instances = yield* providerInstances.listInstances;
               for (const instance of instances) {

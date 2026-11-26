@@ -489,14 +489,23 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
               ),
             ).pipe(
               Effect.flatMap((response) => parse(response, requestedAt)),
-              Effect.orElseSucceed(() => []),
+              Effect.asSome,
+              Effect.orElseSucceed(() => Option.none<ServerProviderUsageWindow[]>()),
             );
           }),
         { concurrency: "unbounded" },
       );
+      // The primary host is where this tier is metered; when it fails, the secondary host
+      // returns untouched 100% buckets that must not replace real quota readings.
+      if (responses[0] === undefined || Option.isNone(responses[0])) {
+        return [];
+      }
       const windows = new Map<string, ServerProviderUsageWindow>();
-      for (const window of responses.flat()) {
-        if (!windows.has(window.id)) windows.set(window.id, window);
+      for (const response of responses) {
+        if (Option.isNone(response)) continue;
+        for (const window of response.value) {
+          if (!windows.has(window.id)) windows.set(window.id, window);
+        }
       }
       return [...windows.values()];
     });

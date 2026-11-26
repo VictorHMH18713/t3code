@@ -1128,3 +1128,490 @@ export function collectProviderUsageLimits(
   }
   return { createdAt: DateTime.formatIso(DateTime.makeUnsafe(now)), accounts, notices };
 }
+
+export interface CachedProviderUsageSnapshot {
+  readonly driver: ServerProvider["driver"];
+  readonly instanceId: ProviderInstanceId;
+  readonly displayName?: string | null | undefined;
+  readonly accentColor?: string | undefined;
+  readonly email?: string | undefined;
+  readonly workspaceId?: string | undefined;
+  readonly plan?: string | undefined;
+  readonly limits: ServerProviderUsageLimits;
+}
+
+export interface CachedHubUsageSourceSnapshot {
+  readonly id: UsageLimitSourceSnapshot["id"];
+  readonly label: string;
+  readonly kind: UsageLimitSourceSnapshot["kind"];
+  readonly endpoint?: string | undefined;
+  readonly checkedAt: UsageLimitSourceSnapshot["checkedAt"];
+  readonly accounts: Readonly<Record<string, UsageLimitSourceAccount>>;
+}
+
+export interface CachedEnvironmentUsageLimits {
+  readonly providers: Readonly<Record<string, CachedProviderUsageSnapshot>>;
+  readonly hubSources?: Readonly<Record<string, CachedHubUsageSourceSnapshot>> | undefined;
+}
+
+export type UsageLimitsCache = Readonly<Record<string, CachedEnvironmentUsageLimits>>;
+
+const hasUsableLimits = (limits: ServerProviderUsageLimits | undefined): boolean =>
+  limits !== undefined && limitsNotice(limits) === null;
+
+const sameOptionalStringArray = (
+  left: readonly string[] | undefined,
+  right: readonly string[] | undefined,
+): boolean =>
+  left === right ||
+  (left !== undefined &&
+    right !== undefined &&
+    left.length === right.length &&
+    left.every((item, index) => item === right[index]));
+
+function usageLimitsEqual(
+  left: ServerProviderUsageLimits,
+  right: ServerProviderUsageLimits,
+): boolean {
+  if (left === right) return true;
+  if (
+    left.checkedAt !== right.checkedAt ||
+    left.windows.length !== right.windows.length ||
+    left.zeroSpendCap !== right.zeroSpendCap ||
+    left.credentialFingerprint !== right.credentialFingerprint ||
+    left.unavailable?.reason !== right.unavailable?.reason ||
+    left.unavailable?.message !== right.unavailable?.message ||
+    left.externalUsage?.url !== right.externalUsage?.url ||
+    left.externalUsage?.label !== right.externalUsage?.label ||
+    left.resetCredits?.availableCount !== right.resetCredits?.availableCount ||
+    left.resetCredits?.nextCreditId !== right.resetCredits?.nextCreditId
+  ) {
+    return false;
+  }
+  return left.windows.every((window, index) => {
+    const candidate = right.windows[index];
+    return (
+      candidate !== undefined &&
+      window.id === candidate.id &&
+      window.kind === candidate.kind &&
+      window.label === candidate.label &&
+      window.usedPercent === candidate.usedPercent &&
+      window.resetsAt === candidate.resetsAt &&
+      window.windowDurationMins === candidate.windowDurationMins &&
+      sameOptionalStringArray(window.modelIds, candidate.modelIds) &&
+      sameOptionalStringArray(window.providerIds, candidate.providerIds)
+    );
+  });
+}
+
+function cachedProviderSnapshotsEqual(
+  left: CachedProviderUsageSnapshot | undefined,
+  right: CachedProviderUsageSnapshot,
+): boolean {
+  return (
+    left !== undefined &&
+    left.driver === right.driver &&
+    left.instanceId === right.instanceId &&
+    left.displayName === right.displayName &&
+    left.accentColor === right.accentColor &&
+    left.email === right.email &&
+    left.workspaceId === right.workspaceId &&
+    left.plan === right.plan &&
+    usageLimitsEqual(left.limits, right.limits)
+  );
+}
+
+function cachedHubAccountsEqual(
+  left: UsageLimitSourceAccount | undefined,
+  right: UsageLimitSourceAccount,
+): boolean {
+  return (
+    left !== undefined &&
+    left.id === right.id &&
+    left.driver === right.driver &&
+    left.email === right.email &&
+    left.workspaceId === right.workspaceId &&
+    left.plan === right.plan &&
+    usageLimitsEqual(left.usageLimits, right.usageLimits)
+  );
+}
+
+function differsIgnoreUndefined(
+  left: string | undefined,
+  right: string | undefined,
+  caseInsensitive = false,
+): boolean {
+  if (left === undefined || right === undefined) return false;
+  return caseInsensitive ? left.toLowerCase() !== right.toLowerCase() : left !== right;
+}
+
+function matchesCachedIdentity(
+  auth: Pick<ServerProvider["auth"], "email" | "workspaceId">,
+  cached: Pick<CachedProviderUsageSnapshot, "email" | "workspaceId">,
+): boolean {
+  return (
+    !differsIgnoreUndefined(auth.email?.trim(), cached.email?.trim(), true) &&
+    !differsIgnoreUndefined(auth.workspaceId, cached.workspaceId, false)
+  );
+}
+
+const hubAccountCacheKey = (account: Pick<UsageLimitSourceAccount, "id" | "workspaceId">) =>
+  `${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
+
+function cachedProviderToServerProvider(entry: CachedProviderUsageSnapshot): ServerProvider {
+  return {
+    driver: entry.driver,
+    instanceId: entry.instanceId,
+    ...(entry.displayName ? { displayName: entry.displayName } : {}),
+    ...(entry.accentColor ? { accentColor: entry.accentColor } : {}),
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    checkedAt: entry.limits.checkedAt,
+    auth: {
+      status: "authenticated",
+      ...(entry.email ? { email: entry.email } : {}),
+      ...(entry.workspaceId ? { workspaceId: entry.workspaceId } : {}),
+      ...(entry.plan ? { label: entry.plan } : {}),
+    },
+    models: [],
+    slashCommands: [],
+    skills: [],
+    usageLimits: entry.limits,
+  };
+}
+
+function fallbackProviderFromCache(
+  provider: ServerProvider,
+  cached: CachedProviderUsageSnapshot,
+): ServerProvider {
+  return {
+    ...provider,
+    ...(provider.availability === "unavailable" ? { availability: undefined } : {}),
+    installed: true,
+    auth: {
+      ...provider.auth,
+      ...(provider.auth.email === undefined && cached.email ? { email: cached.email } : {}),
+      ...(provider.auth.workspaceId === undefined && cached.workspaceId
+        ? { workspaceId: cached.workspaceId }
+        : {}),
+      ...(provider.auth.label === undefined && cached.plan ? { label: cached.plan } : {}),
+    },
+    usageLimits: {
+      ...cached.limits,
+      ...(provider.usageLimits?.resetCredits
+        ? { resetCredits: provider.usageLimits.resetCredits }
+        : {}),
+    },
+  };
+}
+
+function reconcileHubSourcesWithCache(
+  sources: UsageLimitSourceSnapshots | undefined,
+  previousHubs: Readonly<Record<string, CachedHubUsageSourceSnapshot>> | undefined,
+): {
+  readonly sources: UsageLimitSourceSnapshots | undefined;
+  readonly nextHubs: Readonly<Record<string, CachedHubUsageSourceSnapshot>> | undefined;
+  readonly cacheChanged: boolean;
+  readonly sourcesChanged: boolean;
+} {
+  if (sources === undefined) {
+    return {
+      sources: undefined,
+      nextHubs: undefined,
+      cacheChanged: previousHubs !== undefined && Object.keys(previousHubs).length > 0,
+      sourcesChanged: false,
+    };
+  }
+
+  const nextHubs: Record<string, CachedHubUsageSourceSnapshot> = {};
+  let cacheChanged = false;
+  let sourcesChanged = false;
+
+  const nextSources = sources.map((source) => {
+    const previousSource = previousHubs?.[source.id];
+    if (source.accounts.length === 0 && source.error && previousSource) {
+      nextHubs[source.id] = previousSource;
+      const recoveredAccounts = Object.values(previousSource.accounts);
+      if (recoveredAccounts.length > 0) {
+        sourcesChanged = true;
+        return { ...source, accounts: recoveredAccounts };
+      }
+      return source;
+    }
+
+    const nextAccountsCache: Record<string, UsageLimitSourceAccount> = {};
+    let accountsChanged = false;
+    const nextAccounts = source.accounts.map((account) => {
+      const key = hubAccountCacheKey(account);
+      const cachedAccount = previousSource?.accounts[key];
+      if (account.usageLimits.unavailable?.reason === "unsupported") {
+        if (cachedAccount !== undefined) cacheChanged = true;
+        return account;
+      }
+      if (hasUsableLimits(account.usageLimits)) {
+        nextAccountsCache[key] =
+          cachedAccount && cachedHubAccountsEqual(cachedAccount, account) ? cachedAccount : account;
+        if (!cachedAccount || !cachedHubAccountsEqual(cachedAccount, account)) {
+          cacheChanged = true;
+        }
+        return account;
+      }
+      if (cachedAccount) {
+        nextAccountsCache[key] = cachedAccount;
+        accountsChanged = true;
+        sourcesChanged = true;
+        return {
+          ...account,
+          email: account.email ?? cachedAccount.email,
+          workspaceId: account.workspaceId ?? cachedAccount.workspaceId,
+          plan: account.plan ?? cachedAccount.plan,
+          usageLimits: {
+            ...cachedAccount.usageLimits,
+            ...(account.usageLimits.resetCredits
+              ? { resetCredits: account.usageLimits.resetCredits }
+              : {}),
+          },
+        };
+      }
+      return account;
+    });
+
+    if (previousSource) {
+      for (const oldKey of Object.keys(previousSource.accounts)) {
+        if (!(oldKey in nextAccountsCache)) {
+          cacheChanged = true;
+        }
+      }
+    }
+
+    if (Object.keys(nextAccountsCache).length > 0) {
+      const sameSourceMeta =
+        previousSource !== undefined &&
+        previousSource.label === source.label &&
+        previousSource.kind === source.kind &&
+        previousSource.endpoint === source.endpoint &&
+        Object.keys(previousSource.accounts).length === Object.keys(nextAccountsCache).length &&
+        Object.keys(nextAccountsCache).every(
+          (k) => previousSource.accounts[k] === nextAccountsCache[k],
+        );
+      nextHubs[source.id] =
+        sameSourceMeta && previousSource
+          ? previousSource
+          : {
+              id: source.id,
+              label: source.label,
+              kind: source.kind,
+              ...(source.endpoint ? { endpoint: source.endpoint } : {}),
+              checkedAt: source.checkedAt,
+              accounts: nextAccountsCache,
+            };
+      if (!sameSourceMeta) cacheChanged = true;
+    } else if (previousSource !== undefined) {
+      cacheChanged = true;
+    }
+
+    return accountsChanged ? { ...source, accounts: nextAccounts } : source;
+  });
+
+  if (previousHubs) {
+    for (const oldSourceId of Object.keys(previousHubs)) {
+      if (!(oldSourceId in nextHubs)) {
+        cacheChanged = true;
+      }
+    }
+  }
+
+  return {
+    sources: sourcesChanged ? nextSources : sources,
+    nextHubs: Object.keys(nextHubs).length > 0 ? nextHubs : undefined,
+    cacheChanged,
+    sourcesChanged,
+  };
+}
+
+/**
+ * Reconciles live presentations with the last known good quota snapshots so transient
+ * probe failures, provider timeouts, and server restarts continue displaying prior quota
+ * values instead of hiding them, while still clearing cache on disable, sign-out,
+ * `unsupported`, or account switch.
+ */
+export function resolvePresentationsWithUsageLimitsCache(
+  presentations: LimitPresentations,
+  cache: UsageLimitsCache,
+  options?: { readonly pruneMissingEnvironments?: boolean },
+): {
+  readonly presentations: LimitPresentations;
+  readonly nextCache: UsageLimitsCache;
+  readonly changed: boolean;
+} {
+  const pruneMissingEnvironments = options?.pruneMissingEnvironments ?? true;
+  const nextCache: Record<string, CachedEnvironmentUsageLimits> = {};
+  let cacheChanged = false;
+  let presentationsChanged = false;
+  const nextPresentations = new Map<
+    EnvironmentId,
+    LimitPresentations extends ReadonlyMap<EnvironmentId, infer V> ? V : never
+  >();
+
+  const presentIds = new Set(Array.from(presentations.keys(), String));
+  if (!pruneMissingEnvironments) {
+    for (const [envId, cachedEnv] of Object.entries(cache)) {
+      if (!presentIds.has(envId)) {
+        nextCache[envId] = cachedEnv;
+      }
+    }
+  } else {
+    for (const envId of Object.keys(cache)) {
+      if (!presentIds.has(envId)) {
+        cacheChanged = true;
+      }
+    }
+  }
+
+  for (const [environmentId, presentation] of presentations) {
+    const envKey = String(environmentId);
+    const previousEnvCache = cache[envKey];
+
+    if (presentation.serverConfig === null) {
+      if (previousEnvCache) {
+        nextCache[envKey] = previousEnvCache;
+        const cachedProviders = Object.values(previousEnvCache.providers).map(
+          cachedProviderToServerProvider,
+        );
+        const cachedSources = previousEnvCache.hubSources
+          ? Object.values(previousEnvCache.hubSources).map((source) => ({
+              id: source.id,
+              label: source.label,
+              kind: source.kind,
+              ...(source.endpoint ? { endpoint: source.endpoint } : {}),
+              checkedAt: source.checkedAt,
+              accounts: Object.values(source.accounts),
+            }))
+          : undefined;
+        if (cachedProviders.length > 0 || (cachedSources && cachedSources.length > 0)) {
+          presentationsChanged = true;
+          nextPresentations.set(environmentId, {
+            ...presentation,
+            serverConfig: {
+              providers: cachedProviders,
+              ...(cachedSources ? { usageLimitSources: cachedSources } : {}),
+            },
+          });
+          continue;
+        }
+      }
+      nextPresentations.set(environmentId, presentation);
+      continue;
+    }
+
+    const nextProvidersCache: Record<string, CachedProviderUsageSnapshot> = {};
+    let envProvidersChanged = false;
+    const nextProviders = presentation.serverConfig.providers.map((provider) => {
+      const previousCached = previousEnvCache?.providers[provider.instanceId];
+      const definitivelyUnavailable =
+        !provider.enabled ||
+        (!provider.installed && provider.availability !== "unavailable") ||
+        provider.auth.status === "unauthenticated" ||
+        provider.usageLimits?.unavailable?.reason === "unsupported";
+
+      if (definitivelyUnavailable) {
+        if (previousCached !== undefined) cacheChanged = true;
+        return provider;
+      }
+
+      if (
+        provider.usageLimits !== undefined &&
+        hasUsableLimits(provider.usageLimits) &&
+        isProviderAvailable(provider)
+      ) {
+        const snapshot: CachedProviderUsageSnapshot = {
+          driver: provider.driver,
+          instanceId: provider.instanceId,
+          ...(provider.displayName !== undefined ? { displayName: provider.displayName } : {}),
+          ...(provider.accentColor !== undefined ? { accentColor: provider.accentColor } : {}),
+          ...(provider.auth.email !== undefined ? { email: provider.auth.email } : {}),
+          ...(provider.auth.workspaceId !== undefined
+            ? { workspaceId: provider.auth.workspaceId }
+            : {}),
+          ...(provider.auth.label !== undefined ? { plan: provider.auth.label } : {}),
+          limits: provider.usageLimits,
+        };
+        if (previousCached && cachedProviderSnapshotsEqual(previousCached, snapshot)) {
+          nextProvidersCache[provider.instanceId] = previousCached;
+        } else {
+          nextProvidersCache[provider.instanceId] = snapshot;
+          cacheChanged = true;
+        }
+        return provider;
+      }
+
+      if (previousCached && matchesCachedIdentity(provider.auth, previousCached)) {
+        nextProvidersCache[provider.instanceId] = previousCached;
+        envProvidersChanged = true;
+        return fallbackProviderFromCache(provider, previousCached);
+      }
+
+      if (previousCached !== undefined) {
+        cacheChanged = true;
+      }
+      return provider;
+    });
+
+    if (previousEnvCache) {
+      for (const oldInstanceId of Object.keys(previousEnvCache.providers)) {
+        if (!(oldInstanceId in nextProvidersCache)) {
+          cacheChanged = true;
+        }
+      }
+    }
+
+    const hubResult = reconcileHubSourcesWithCache(
+      presentation.serverConfig.usageLimitSources,
+      previousEnvCache?.hubSources,
+    );
+    if (hubResult.cacheChanged) cacheChanged = true;
+
+    const hasProvidersCache = Object.keys(nextProvidersCache).length > 0;
+    if (hasProvidersCache || hubResult.nextHubs) {
+      const providersCacheUnchanged =
+        previousEnvCache !== undefined &&
+        Object.keys(previousEnvCache.providers).length === Object.keys(nextProvidersCache).length &&
+        Object.keys(nextProvidersCache).every(
+          (k) => previousEnvCache.providers[k] === nextProvidersCache[k],
+        );
+      nextCache[envKey] =
+        previousEnvCache !== undefined &&
+        providersCacheUnchanged &&
+        previousEnvCache.hubSources === hubResult.nextHubs
+          ? previousEnvCache
+          : {
+              providers: nextProvidersCache,
+              ...(hubResult.nextHubs ? { hubSources: hubResult.nextHubs } : {}),
+            };
+    } else if (previousEnvCache !== undefined) {
+      cacheChanged = true;
+    }
+
+    if (envProvidersChanged || hubResult.sourcesChanged) {
+      presentationsChanged = true;
+      nextPresentations.set(environmentId, {
+        ...presentation,
+        serverConfig: {
+          ...presentation.serverConfig,
+          providers: envProvidersChanged ? nextProviders : presentation.serverConfig.providers,
+          ...(hubResult.sources !== undefined ? { usageLimitSources: hubResult.sources } : {}),
+        },
+      });
+    } else {
+      nextPresentations.set(environmentId, presentation);
+    }
+  }
+
+  return {
+    presentations: presentationsChanged ? nextPresentations : presentations,
+    nextCache: cacheChanged ? nextCache : cache,
+    changed: cacheChanged,
+  };
+}

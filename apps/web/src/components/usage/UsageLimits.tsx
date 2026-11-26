@@ -23,7 +23,7 @@ import { Fragment, useLayoutEffect, useState } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { observeResize } from "../../lib/observeResize";
-import { environmentPresentations } from "../../state/presentation";
+import { presentationsWithCachedLimitsAtom } from "../../state/presentation";
 import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -398,7 +398,7 @@ export function UsageLimitsSection({
   readonly hiddenProviders: ReadonlySet<UsageProviderKind>;
   readonly now: number;
 }) {
-  const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
+  const presentations = useAtomValue(presentationsWithCachedLimitsAtom);
   const hiddenDrivers = new Set<ServerProvider["driver"]>(
     [...hiddenProviders].map((provider) => PROVIDER_PRESENTATION[provider].driverKind),
   );

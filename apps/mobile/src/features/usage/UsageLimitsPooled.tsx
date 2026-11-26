@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { Atom } from "effect/reactivity";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { EnvironmentId } from "@t3tools/contracts";
 import { providerClients } from "@t3tools/client-runtime/provider-clients";
@@ -10,8 +11,10 @@ import {
   displayLimitWindows,
   paceRemainingPercent,
   remainingPercent,
+  resolvePresentationsWithUsageLimitsCache,
   type LimitAccount,
   type LimitPoolWindow,
+  type UsageLimitsCache,
 } from "@t3tools/shared/usageLimits";
 import {
   collectExternalUsageLinks,
@@ -466,6 +469,19 @@ function PoolWindowCard({
   );
 }
 
+let mobileUsageLimitsCache: UsageLimitsCache = {};
+const presentationsWithCachedLimitsAtom = Atom.make((get) => {
+  const presentations = get(environmentPresentations.presentationsWithProvidersAtom);
+  const reconciled = resolvePresentationsWithUsageLimitsCache(
+    presentations,
+    mobileUsageLimitsCache,
+  );
+  if (reconciled.changed) {
+    mobileUsageLimitsCache = reconciled.nextCache;
+  }
+  return reconciled.presentations;
+}).pipe(Atom.withLabel("mobile-presentations-with-cached-limits"));
+
 export function UsageLimitsSection({
   now,
   failedLabels,
@@ -477,7 +493,7 @@ export function UsageLimitsSection({
   readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
   readonly wide?: boolean;
 }) {
-  const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
+  const presentations = useAtomValue(presentationsWithCachedLimitsAtom);
   const selected =
     selectedEnvironmentIds === null
       ? presentations

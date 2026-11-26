@@ -216,10 +216,18 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           differs(probedSnapshot.auth.email?.toLowerCase(), previous.email?.toLowerCase()) ||
           (probedSnapshot.auth.workspaceId !== undefined &&
             probedSnapshot.auth.workspaceId !== previous.workspaceId);
-        const usageLimits = switchedAccount
+        const clearedAccount =
+          switchedAccount ||
+          !probedSnapshot.enabled ||
+          probedSnapshot.auth.status === "unauthenticated";
+        const preservePreviousLimits =
+          !clearedAccount &&
+          probedSnapshot.usageLimits === undefined &&
+          (state.snapshot.usageLimits !== usageBeforeProbe ||
+            (state.snapshot.usageLimits !== undefined && !state.snapshot.usageLimits.unavailable));
+        const usageLimits = clearedAccount
           ? probedSnapshot.usageLimits
-          : probedSnapshot.usageLimits === undefined &&
-              state.snapshot.usageLimits !== usageBeforeProbe
+          : preservePreviousLimits
             ? state.snapshot.usageLimits
             : resolveUsageLimitsAfterProbe({
                 published: state.snapshot.usageLimits,
